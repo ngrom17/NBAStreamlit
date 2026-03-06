@@ -5,12 +5,10 @@ Adds Expected Value and Kelly Criterion vs Kalshi prices.
 """
 
 import re
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-import joblib
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -120,9 +118,10 @@ def prob_to_american(p: float) -> str:
 # ============================================================================
 
 def _american_to_decimal(american_odds: float) -> float:
+    """Convert American odds to decimal (includes stake: +150 → 2.50, -110 → 1.91)."""
     if american_odds >= 100:
-        return round(american_odds / 100, 2)
-    return round(100 / abs(american_odds), 2)
+        return round(1 + american_odds / 100, 2)
+    return round(1 + 100 / abs(american_odds), 2)
 
 
 def expected_value(p_win: float, american_odds: float) -> float:

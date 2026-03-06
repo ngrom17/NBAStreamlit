@@ -155,44 +155,51 @@ def fetch_team_stats() -> Dict[str, Dict]:
         season = f"{yr}-{str(yr + 1)[2:]}"  # March 2026 → "2025-26"
 
         # Fetch 1: Season metrics (E_NET_RATING, E_PACE, E_OFF_RATING, E_DEF_RATING)
-        time.sleep(0.6)
-        try:
-            metrics = teamestimatedmetrics.TeamEstimatedMetrics(season=season).get_data_frames()[0]
+        # Retry logic: try up to 3 times with increasing wait
+        for attempt in range(3):
+            try:
+                time.sleep(1.0 + attempt)  # 1s, 2s, 3s between attempts
+                metrics = teamestimatedmetrics.TeamEstimatedMetrics(season=season).get_data_frames()[0]
 
-            for _, row in metrics.iterrows():
-                abbr = row.get("TEAM_ABBREVIATION", "")
-                if abbr:
-                    stats_dict[abbr] = {
-                        "off_rating": row.get("E_OFF_RATING"),
-                        "def_rating": row.get("E_DEF_RATING"),
-                        "net_rating": row.get("E_NET_RATING"),
-                        "pace": row.get("E_PACE"),
-                        "last10_winpct": 0.5,  # Will be updated below
-                    }
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ nba_api metrics failed: {str(e)[:50]}")
-            return {}
+                for _, row in metrics.iterrows():
+                    abbr = row.get("TEAM_ABBREVIATION", "")
+                    if abbr:
+                        stats_dict[abbr] = {
+                            "off_rating": row.get("E_OFF_RATING"),
+                            "def_rating": row.get("E_DEF_RATING"),
+                            "net_rating": row.get("E_NET_RATING"),
+                            "pace": row.get("E_PACE"),
+                            "last10_winpct": 0.5,  # Will be updated below
+                        }
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt == 2:  # Last attempt
+                    st.sidebar.warning(f"⚠️ nba_api metrics failed after 3 tries")
+                    return {}
+                # Otherwise retry
 
         # Fetch 2: Last 10 games record (for form)
-        time.sleep(0.6)
-        try:
-            dashboard = leaguedashteamstats.LeagueDashTeamStats(
-                season=season,
-                last_n_games=10,
-                measure_type_detailed_defense="Base"
-            ).get_data_frames()[0]
+        for attempt in range(3):
+            try:
+                time.sleep(1.0 + attempt)  # 1s, 2s, 3s between attempts
+                dashboard = leaguedashteamstats.LeagueDashTeamStats(
+                    season=season,
+                    last_n_games=10,
+                    measure_type_detailed_defense="Base"
+                ).get_data_frames()[0]
 
-            for _, row in dashboard.iterrows():
-                abbr = row.get("TEAM_ABBREVIATION", "")
-                if abbr and abbr in stats_dict:
-                    wins = row.get("W", 0) or 0
-                    losses = row.get("L", 0) or 0
-                    total = wins + losses
-                    if total > 0:
-                        stats_dict[abbr]["last10_winpct"] = wins / total
-        except Exception as e:
-            # Fail silently, use 0.5 default
-            pass
+                for _, row in dashboard.iterrows():
+                    abbr = row.get("TEAM_ABBREVIATION", "")
+                    if abbr and abbr in stats_dict:
+                        wins = row.get("W", 0) or 0
+                        losses = row.get("L", 0) or 0
+                        total = wins + losses
+                        if total > 0:
+                            stats_dict[abbr]["last10_winpct"] = wins / total
+                break  # Success, exit retry loop
+            except Exception as e:
+                if attempt == 2:  # Last attempt, fail silently
+                    pass
 
         return stats_dict
 

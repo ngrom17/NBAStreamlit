@@ -8,10 +8,14 @@ and displays interactive betting edges with adjustable metric weights.
 import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timezone, timedelta
+from dotenv import load_dotenv
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
     from backports.zoneinfo import ZoneInfo
+
+# Load environment variables from .env
+load_dotenv()
 
 from config import CATEGORY_COLORS, METRIC_WEIGHTS_CONFIG
 from fetch import fetch_games, fetch_kalshi_markets, fetch_team_stats

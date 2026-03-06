@@ -126,6 +126,14 @@ def main():
         st.warning("⚠️ No markets matched to today's games.")
         return
 
+    # Warn if XGBoost model did not run (stats load failed)
+    if not df["stats_loaded"].any():
+        st.warning(
+            "⚠️ NBA team stats unavailable — XGBoost model did not run. "
+            "Edges shown are Kalshi market prices only (model = 50/50). "
+            "Refresh in a few minutes to retry."
+        )
+
     # Sidebar stats
     with st.sidebar:
         st.divider()

@@ -263,18 +263,11 @@ def build_all_rows(
                         model_prob = away_prob_xgb
 
                 elif market_type == "spread":
-                    # Use XGBoost home_prob adjusted by spread line
-                    if features is not None and parsed["line"] is not None:
-                        try:
-                            frame = features.copy()
-                            frame["OU"] = parsed["line"]
-                            data = frame.values.astype(float).reshape(1, -1)
-                            ou_probs = _predict_probs(_xgb_uo, data)[0]
-                            model_prob = float(ou_probs[1])  # P(home covers)
-                        except Exception:
-                            model_prob = kalshi_prob  # fallback: no edge
-                    else:
-                        model_prob = kalshi_prob
+                    # No spread-specific model available. The O/U model was
+                    # trained on game totals (~220 pts) — feeding a spread
+                    # line (e.g. 7.5) produces semantically invalid output.
+                    # Honest fallback: no edge claimed vs the market.
+                    model_prob = kalshi_prob
 
                 elif market_type == "total":
                     if features is not None and parsed["line"] is not None:

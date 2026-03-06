@@ -2,14 +2,7 @@
 NBA Betting Intelligence Dashboard — Streamlit App
 
 Uses BallDontLie API for games + nba_api for team stats + Kalshi for prediction market odds.
-Features interactive model conviction tilts and intelligent bet categorization.
-
-Conviction Tilts (all on main screen):
-  - Net Rating: Team strength (offensive - defensive rating differential)
-  - Recent Form: Hot/cold momentum over last 10 games
-  - Home Court: Inherent home court advantage
-  - Pace Variance: Game speed impact on win probability spread
-  - Rest Advantage: Back-to-back fatigue penalty / rest days bonus
+Features interactive metric weight adjustments and intelligent bet categorization.
 """
 
 import streamlit as st
@@ -51,10 +44,7 @@ th { font-size: 0.65rem; font-weight: 700; color: #8b949e; text-transform: upper
      letter-spacing: 0.06em; padding: 8px 10px; border-bottom: 2px solid #30363d; text-align: left; }
 td { font-size: 0.85rem; padding: 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
-.conviction-card { background: #161b22; border-radius: 8px; padding: 16px; border-left: 4px solid #58a6ff; }
-.conviction-title { color: #58a6ff; font-weight: 700; font-size: 0.9rem; text-transform: uppercase; margin-bottom: 8px; }
-.conviction-desc { color: #8b949e; font-size: 0.8rem; line-height: 1.4; margin-bottom: 12px; }
-.conviction-slider { margin: 12px 0; }
+.weight-slider { margin: 12px 0; }
 .green { color: #3fb950; font-weight: 700; }
 .red { color: #f85149; font-weight: 700; }
 .grey { color: #8b949e; }
@@ -69,7 +59,7 @@ tr:last-child td { border-bottom: none; }
 KALSHI_API_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 BALLDONTLIE_API_BASE = "https://api.balldontlie.io/v1"
 
-# Team abbreviation map (BallDontLie → Kalshi, should be same)
+# Team abbreviation map
 TEAM_ABBREVS = {
     "ATL": "ATL", "BOS": "BOS", "BKN": "BKN", "CHA": "CHA",
     "CHI": "CHI", "CLE": "CLE", "DAL": "DAL", "DEN": "DEN",
@@ -91,32 +81,27 @@ CATEGORY_COLORS = {
     "LOW EDGE": "#30363d",
 }
 
-# Conviction tilt explanations
-CONVICTIONS = {
+# Metric weight explanations
+METRIC_WEIGHTS = {
     "w_net": {
         "label": "📊 Net Rating",
-        "description": "Team strength indicator: offensive rating minus defensive rating. Higher = better team. Adjust UP if you believe strength matchups are predictive.",
-        "min": 0.0, "max": 2.0, "default": 1.0,
+        "description": "Team strength indicator: offensive rating minus defensive rating. Higher = better team. Adjust UP if you believe team quality is predictive of outcomes.",
     },
     "w_form": {
         "label": "🔥 Recent Form",
         "description": "Hot/cold momentum over last 10 games. Adjust UP if you think current form beats historical strength, DOWN if form is noise.",
-        "min": 0.0, "max": 2.0, "default": 1.0,
     },
     "w_hca": {
         "label": "🏠 Home Court",
         "description": "Home team inherent advantage (~2.5 pts/game). Adjust UP for more home bias, DOWN to ignore crowd effects.",
-        "min": 0.0, "max": 2.0, "default": 1.0,
     },
     "w_pace": {
         "label": "⚡ Pace Variance",
-        "description": "Game tempo impact on win probability spread. Fast-paced games have higher variance. Adjust UP if you believe pace affects spread.",
-        "min": 0.0, "max": 2.0, "default": 0.5,
+        "description": "Game tempo impact on win probability spread. Fast-paced games have higher variance. Adjust UP if pace affects predictability.",
     },
     "w_rest": {
         "label": "😴 Rest Advantage",
         "description": "Back-to-back fatigue penalty & rest day bonus. Adjust UP if B2B/rest days are significant, DOWN if teams manage load well.",
-        "min": 0.0, "max": 2.0, "default": 0.5,
     },
 }
 
@@ -238,20 +223,24 @@ def fetch_nba_stats_simple() -> Dict[str, Dict]:
         now = datetime.now()
         season = f"{now.year}-{now.year + 1}"
 
-        # Fetch metrics
+        # Fetch metrics with timeout handling
         time.sleep(0.6)
-        metrics = teamestimatedmetrics.TeamEstimatedMetrics(season=season).get_data_frames()[0]
+        try:
+            metrics = teamestimatedmetrics.TeamEstimatedMetrics(season=season).get_data_frames()[0]
 
-        for _, row in metrics.iterrows():
-            abbr = row.get("TEAM_ABBREVIATION", "")
-            if abbr:
-                stats_dict[abbr] = {
-                    "off_rating": row.get("E_OFF_RATING"),
-                    "def_rating": row.get("E_DEF_RATING"),
-                    "net_rating": row.get("E_NET_RATING"),
-                    "pace": row.get("E_PACE"),
-                    "last10_winpct": 0.5,  # Simplified: no per-game log
-                }
+            for _, row in metrics.iterrows():
+                abbr = row.get("TEAM_ABBREVIATION", "")
+                if abbr:
+                    stats_dict[abbr] = {
+                        "off_rating": row.get("E_OFF_RATING"),
+                        "def_rating": row.get("E_DEF_RATING"),
+                        "net_rating": row.get("E_NET_RATING"),
+                        "pace": row.get("E_PACE"),
+                        "last10_winpct": 0.5,
+                    }
+        except ConnectionError as ce:
+            st.sidebar.warning(f"⚠️ nba_api connection issue — using neutral stats. Retry in a moment.")
+            return {}
 
         return stats_dict
 
@@ -282,14 +271,12 @@ def kalshi_mid_price(mkt: Dict) -> float:
 
 def parse_kalshi_nba_ticker(ticker: str) -> Optional[Dict]:
     """Parse Kalshi NBA ticker."""
-    # Moneyline: KXNBAGAME-{YYMONDD}{AWAY}{HOME}-{TEAM}
     ml_pattern = r"KXNBAGAME-\d{2}[A-Z]{3}\d{2}([A-Z]{2,3})([A-Z]{2,3})-([A-Z]{2,3})$"
     ml_match = re.match(ml_pattern, ticker)
     if ml_match:
         away_abbr, home_abbr, ticker_team = ml_match.groups()
         return {"market_type": "moneyline", "away_abbr": away_abbr, "home_abbr": home_abbr, "line": None}
 
-    # Spread: KXNBASPREAD-{YYMONDD}{AWAY}{HOME}-{TEAM}{N}
     sp_pattern = r"KXNBASPREAD-\d{2}[A-Z]{3}\d{2}([A-Z]{2,3})([A-Z]{2,3})-([A-Z]{2,3})(\d+)$"
     sp_match = re.match(sp_pattern, ticker)
     if sp_match:
@@ -297,7 +284,6 @@ def parse_kalshi_nba_ticker(ticker: str) -> Optional[Dict]:
         spread = float(spread_str) / 2.0
         return {"market_type": "spread", "away_abbr": away_abbr, "home_abbr": home_abbr, "line": spread}
 
-    # Total: KXNBATOTAL-{YYMONDD}{AWAY}{HOME}-{N}
     tot_pattern = r"KXNBATOTAL-\d{2}[A-Z]{3}\d{2}([A-Z]{2,3})([A-Z]{2,3})-(\d+)$"
     tot_match = re.match(tot_pattern, ticker)
     if tot_match:
@@ -352,7 +338,7 @@ def compute_win_probability(
 
     net_diff = home_net - away_net
     form_diff = home_form - away_form
-    rest_diff = 0  # Simplified: no rest day data from BallDontLie
+    rest_diff = 0
 
     point_spread = (
         net_diff * w_net +
@@ -468,13 +454,11 @@ def build_all_rows(
                 if not parsed:
                     continue
 
-                # Match to game
                 if (parsed["away_abbr"] != away_abbr or parsed["home_abbr"] != home_abbr):
                     continue
 
                 kalshi_prob = kalshi_mid_price(mkt)
 
-                # Compute model probability
                 if market_type == "moneyline":
                     model_prob = compute_win_probability(home_stats, away_stats, **model_weights)
                 elif market_type == "spread":
@@ -510,78 +494,24 @@ def build_all_rows(
 # UI RENDERING
 # ============================================================================
 
-def render_pick_card(row: pd.Series) -> str:
-    """Render pick card."""
-    color = CATEGORY_COLORS.get(row["category"], "#30363d")
-    edge_color = "#3fb950" if row["edge"] > 0.05 else "#ff6b6b" if row["edge"] < 0 else "#d29922"
-
-    return f"""
-    <div style="background: #161b22; border-radius: 10px; padding: 16px; border-left: 4px solid {color}; margin-bottom: 10px;">
-      <div style="color: {color}; font-weight: 700; font-size: 0.85rem; text-transform: uppercase; margin-bottom: 8px;">
-        {row['category']}
-      </div>
-      <div style="color: #e6edf3; font-weight: 700; font-size: 1rem; margin-bottom: 4px;">
-        {row['game_label']}
-      </div>
-      <div style="color: #8b949e; font-size: 0.8rem; margin-bottom: 8px;">
-        {row['title'][:60]}...
-      </div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem;">
-        <div><div style="color: #8b949e;">Model</div><div style="color: #e6edf3; font-weight: 700;">{row['model_prob']:.1%}</div></div>
-        <div><div style="color: #8b949e;">Kalshi</div><div style="color: #e6edf3; font-weight: 700;">{row['kalshi_prob']:.1%}</div></div>
-      </div>
-      <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #30363d;">
-        <div style="color: {edge_color}; font-weight: 700;">Edge: {row['edge']:+.1%}</div>
-        <div style="color: #8b949e; font-size: 0.75rem; margin-top: 4px;">{row['american_odds']}</div>
-      </div>
-    </div>
-    """
-
-
-def render_market_table(df: pd.DataFrame) -> None:
-    """Render market table."""
+def render_market_dataframe(df: pd.DataFrame) -> None:
+    """Render markets as a readable Streamlit dataframe (not HTML)."""
     if df.empty:
         st.caption("No markets found.")
         return
 
-    table_html = """
-    <table style="width: 100%; border-collapse: collapse; margin: 8px 0;">
-      <thead>
-        <tr style="border-bottom: 2px solid #30363d; color: #8b949e;">
-          <th style="text-align: left; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Contract</th>
-          <th style="text-align: center; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Kalshi %</th>
-          <th style="text-align: center; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Odds</th>
-          <th style="text-align: center; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Model %</th>
-          <th style="text-align: center; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Edge</th>
-          <th style="text-align: center; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Category</th>
-          <th style="text-align: right; padding: 8px; font-size: 0.7rem; text-transform: uppercase;">Vol</th>
-        </tr>
-      </thead>
-      <tbody>
-    """
+    # Format for display
+    display_df = df[[
+        "title", "kalshi_prob", "american_odds", "model_prob", "edge", "category", "volume"
+    ]].copy()
 
-    for _, row in df.iterrows():
-        edge_color = "#3fb950" if row["edge"] > 0.05 else "#f85149" if row["edge"] < -0.02 else "#d29922"
-        cat_color = CATEGORY_COLORS.get(row["category"], "#30363d")
+    display_df.columns = ["Contract", "Kalshi %", "Odds", "Model %", "Edge %", "Category", "Volume"]
+    display_df["Kalshi %"] = display_df["Kalshi %"].apply(lambda x: f"{x:.1%}")
+    display_df["Model %"] = display_df["Model %"].apply(lambda x: f"{x:.1%}")
+    display_df["Edge %"] = display_df["Edge %"].apply(lambda x: f"{x:+.1%}")
+    display_df["Volume"] = display_df["Volume"].apply(lambda x: f"{x:,}")
 
-        table_html += f"""
-        <tr style="border-bottom: 1px solid #21262d;">
-          <td style="padding: 10px; color: #e6edf3; font-size: 0.8rem;">{row['title'][:50]}</td>
-          <td style="padding: 10px; color: #e6edf3; text-align: center; font-weight: 600;">{row['kalshi_prob']:.1%}</td>
-          <td style="padding: 10px; color: #8b949e; text-align: center; font-size: 0.75rem;">{row['american_odds']}</td>
-          <td style="padding: 10px; color: #e6edf3; text-align: center; font-weight: 600;">{row['model_prob']:.1%}</td>
-          <td style="padding: 10px; color: {edge_color}; text-align: center; font-weight: 700;">{row['edge']:+.1%}</td>
-          <td style="padding: 10px; text-align: center;">
-            <div style="background: {cat_color}20; color: {cat_color}; padding: 4px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase;">
-              {row['category']}
-            </div>
-          </td>
-          <td style="padding: 10px; color: #8b949e; text-align: right; font-size: 0.75rem;">{row['volume']:,}</td>
-        </tr>
-        """
-
-    table_html += "</tbody></table>"
-    st.markdown(table_html, unsafe_allow_html=True)
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 
 # ============================================================================
@@ -589,15 +519,9 @@ def render_market_table(df: pd.DataFrame) -> None:
 # ============================================================================
 
 def main():
-    # Sidebar: Sport selector
+    # Sidebar
     with st.sidebar:
         st.title("⚙️ Settings")
-        sport = st.radio("Sport", ["NBA", "MLB", "Weather"], index=0, label_visibility="collapsed")
-        if sport != "NBA":
-            st.info(f"{sport} coming soon...")
-            return
-
-        st.divider()
         if st.button("🔄 Refresh All", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -605,34 +529,45 @@ def main():
         now_et = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-5)))
         st.caption(f"Last update: {now_et.strftime('%H:%M:%S ET')}")
 
-    # Main screen: Title + Conviction tilts
+    # Main: Title + Tabs
     st.title("🎯 Kalshi Betting Dashboard")
-    st.subheader("Model Conviction Tilts")
 
-    # Render conviction sliders in 2-column grid
-    col1, col2, col3 = st.columns(3)
+    # Create tabs for Metrics and Help
+    tab_metrics, tab_help = st.tabs(["Metric Weights", "Help"])
 
-    conviction_keys = list(CONVICTIONS.keys())
     model_weights = {}
 
-    for i, key in enumerate(conviction_keys):
-        config = CONVICTIONS[key]
-        col = [col1, col2, col3][i % 3] if i < 3 else [col1, col2, col3][(i - 3) % 3]
+    with tab_metrics:
+        st.subheader("Adjust Your Edge Model")
+        st.caption("Change metric weights to update prediction edges across all markets")
 
-        with col:
-            st.markdown(f"""
-            <div class="conviction-card">
-              <div class="conviction-title">{config['label']}</div>
-              <div class="conviction-desc">{config['description']}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns(3)
 
-            weight = st.slider(
-                config['label'],
-                config['min'], config['max'], config['default'], 0.1,
-                label_visibility="collapsed"
-            )
-            model_weights[key] = weight
+        metric_keys = list(METRIC_WEIGHTS.keys())
+
+        for i, key in enumerate(metric_keys):
+            config = METRIC_WEIGHTS[key]
+            col = [col1, col2, col3][i % 3] if i < 3 else [col1, col2, col3][(i - 3) % 3]
+
+            with col:
+                weight = st.slider(
+                    config['label'],
+                    0.0, 2.0, 1.0 if i < 3 else 0.5, 0.1,
+                    label_visibility="collapsed"
+                )
+                st.caption(config['label'])
+                model_weights[key] = weight
+
+    with tab_help:
+        st.subheader("About Metric Weights")
+        st.write("Each metric weight controls how much that factor influences your win probability prediction.")
+        st.write("")
+
+        for key, config in METRIC_WEIGHTS.items():
+            with st.expander(config['label']):
+                st.write(config['description'])
+                st.divider()
+                st.caption(f"**Range**: 0.0 (ignore) to 2.0 (double weight) | **Default**: {'1.0' if key in ['w_net', 'w_form', 'w_hca'] else '0.5'}")
 
     st.divider()
 
@@ -656,8 +591,6 @@ def main():
 
     if df.empty:
         st.warning("⚠️ No markets matched to games. Check team abbreviations.")
-        st.write("DEBUG: Games loaded:", len(games))
-        st.write("DEBUG: Kalshi markets:", sum(len(m) for m in kalshi_by_type.values()))
         return
 
     # Summary
@@ -676,10 +609,7 @@ def main():
     if top_picks.empty:
         st.info("No high-conviction opportunities today.")
     else:
-        cols = st.columns(len(top_picks))
-        for col, (_, row) in zip(cols, top_picks.iterrows()):
-            with col:
-                st.markdown(render_pick_card(row), unsafe_allow_html=True)
+        render_market_dataframe(top_picks)
 
     st.divider()
 
@@ -690,7 +620,7 @@ def main():
         label = f"{game['away_abbr']} @ {game['home_abbr']}"
         time_str = "LIVE 🔴" if "in_progress" in game["status"].lower() else game["game_time_et"][-5:]
 
-        with st.expander(f"{label} — {time_str}", expanded=False):
+        with st.expander(f"{label} — {time_str}"):
             game_df = df[df["game_id"] == game_id]
             if game_df.empty:
                 st.caption("No markets.")
@@ -699,13 +629,13 @@ def main():
             tab_ml, tab_sp, tab_tot = st.tabs(["Moneyline", "Spread", "Total"])
 
             with tab_ml:
-                render_market_table(game_df[game_df["market_type"] == "moneyline"])
+                render_market_dataframe(game_df[game_df["market_type"] == "moneyline"])
 
             with tab_sp:
-                render_market_table(game_df[game_df["market_type"] == "spread"])
+                render_market_dataframe(game_df[game_df["market_type"] == "spread"])
 
             with tab_tot:
-                render_market_table(game_df[game_df["market_type"] == "total"])
+                render_market_dataframe(game_df[game_df["market_type"] == "total"])
 
     st.divider()
 
@@ -715,7 +645,7 @@ def main():
         if low_edge_df.empty:
             st.caption("None.")
         else:
-            render_market_table(low_edge_df)
+            render_market_dataframe(low_edge_df)
 
 
 if __name__ == "__main__":

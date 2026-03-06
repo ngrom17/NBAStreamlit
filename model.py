@@ -257,10 +257,10 @@ def classify_bet(edge: float, model_prob: float, kalshi_prob: float, market_type
 
     if edge >= t["HOMERUN"]["edge"] and model_prob >= t["HOMERUN"]["model_prob"]:
         return "HOMERUN"
-    elif edge >= t["UNDERVALUED"]["edge"] and edge > 0:
-        return "UNDERVALUED"
     elif kalshi_prob <= t["UNDERDOG"]["kalshi_prob"] and model_prob >= t["UNDERDOG"]["model_prob"]:
         return "UNDERDOG"
+    elif edge >= t["UNDERVALUED"]["edge"]:
+        return "UNDERVALUED"
     elif t["SHARP"]["edge_min"] <= edge < t["SHARP"]["edge_max"]:
         return "SHARP"
     elif edge < 0:

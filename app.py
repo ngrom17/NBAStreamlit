@@ -49,6 +49,11 @@ tr:last-child td { border-bottom: none; }
 .red { color: #f85149; font-weight: 700; }
 .grey { color: #8b949e; }
 .yellow { color: #d29922; font-weight: 700; }
+/* Slider styling */
+.stSlider > div > div > div > div { accent-color: #1f6feb !important; }
+.stSlider [data-testid="stSliderThumb"] { background-color: #1f6feb !important; }
+.stSlider [data-testid="stSliderTrackBg"] { background-color: #30363d !important; }
+.stSlider [data-testid="stSliderTrackFill"] { background-color: #1f6feb !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -210,7 +215,7 @@ def fetch_all_kalshi_nba() -> Dict[str, List[Dict]]:
 def fetch_nba_stats_simple() -> Dict[str, Dict]:
     """Fetch basic NBA team stats. Returns empty dict on failure (graceful fallback)."""
     try:
-        from nba_api.stats.endpoints import teamestimatedmetrics
+        from nba_api.stats.endpoints import teamestimatedmetrics, leaguedashteamstats
         from nba_api.stats.static import teams
 
         stats_dict = {}
@@ -223,7 +228,7 @@ def fetch_nba_stats_simple() -> Dict[str, Dict]:
         now = datetime.now()
         season = f"{now.year}-{now.year + 1}"
 
-        # Fetch metrics with timeout handling
+        # Fetch season metrics (E_NET_RATING, E_PACE, etc.)
         time.sleep(0.6)
         try:
             metrics = teamestimatedmetrics.TeamEstimatedMetrics(season=season).get_data_frames()[0]
@@ -236,11 +241,31 @@ def fetch_nba_stats_simple() -> Dict[str, Dict]:
                         "def_rating": row.get("E_DEF_RATING"),
                         "net_rating": row.get("E_NET_RATING"),
                         "pace": row.get("E_PACE"),
-                        "last10_winpct": 0.5,
+                        "last10_winpct": 0.5,  # Will be updated below
                     }
         except ConnectionError as ce:
             st.sidebar.warning(f"⚠️ nba_api connection issue — using neutral stats. Retry in a moment.")
             return {}
+
+        # Fetch last 10 games record to compute win%
+        time.sleep(0.6)
+        try:
+            dashboard = leaguedashteamstats.LeagueDashTeamStats(
+                season=season,
+                last_n_games=10,
+                measure_type_detailed_defense="Base"
+            ).get_data_frames()[0]
+
+            for _, row in dashboard.iterrows():
+                abbr = row.get("TEAM_ABBREVIATION", "")
+                if abbr and abbr in stats_dict:
+                    wins = row.get("W", 0) or 0
+                    losses = row.get("L", 0) or 0
+                    total = wins + losses
+                    if total > 0:
+                        stats_dict[abbr]["last10_winpct"] = wins / total
+        except Exception as e:
+            pass  # Fail silently, use 0.5 default
 
         return stats_dict
 
@@ -321,13 +346,14 @@ def compute_win_probability(
     w_hca: float = 1.0,
     w_pace: float = 0.5,
     w_rest: float = 0.5,
+    kalshi_market_prob: Optional[float] = None,
 ) -> float:
-    """Compute P(home wins) using multi-factor Gaussian model."""
+    """Compute P(home wins) using multi-factor Gaussian model with optional Kalshi calibration."""
     BASE_SIGMA = 11.0
     HCA_POINTS = 2.5
 
     if not home_stats or not away_stats:
-        return 0.5
+        return kalshi_market_prob if kalshi_market_prob else 0.5
 
     home_net = home_stats.get("net_rating") or 0
     away_net = away_stats.get("net_rating") or 0
@@ -354,13 +380,17 @@ def compute_win_probability(
     z = point_spread / (sigma * math.sqrt(2))
     p_win = 0.5 + 0.5 * math.erf(z)
 
+    # Apply Kalshi calibration shrinkage if available (80% model, 20% Kalshi prior)
+    if kalshi_market_prob is not None:
+        p_win = 0.8 * p_win + 0.2 * kalshi_market_prob
+
     return max(0.01, min(0.99, p_win))
 
 
-def compute_spread_probability(home_stats: Dict, away_stats: Dict, spread_line: float, **weights) -> float:
-    """Compute P(home covers spread)."""
+def compute_spread_probability(home_stats: Dict, away_stats: Dict, spread_line: float, kalshi_market_prob: Optional[float] = None, **weights) -> float:
+    """Compute P(home covers spread) with optional Kalshi calibration."""
     if not home_stats or not away_stats:
-        return 0.5
+        return kalshi_market_prob if kalshi_market_prob else 0.5
 
     BASE_SIGMA = 11.0
     HCA_POINTS = 2.5
@@ -385,13 +415,17 @@ def compute_spread_probability(home_stats: Dict, away_stats: Dict, spread_line: 
     z = point_spread / (sigma * math.sqrt(2))
     p_cover = 0.5 + 0.5 * math.erf(z)
 
+    # Apply Kalshi calibration shrinkage if available
+    if kalshi_market_prob is not None:
+        p_cover = 0.8 * p_cover + 0.2 * kalshi_market_prob
+
     return max(0.01, min(0.99, p_cover))
 
 
-def compute_total_probability(home_stats: Dict, away_stats: Dict, total_line: float, **weights) -> float:
-    """Compute P(total > total_line)."""
+def compute_total_probability(home_stats: Dict, away_stats: Dict, total_line: float, kalshi_market_prob: Optional[float] = None, **weights) -> float:
+    """Compute P(total > total_line) with optional Kalshi calibration."""
     if not home_stats or not away_stats:
-        return 0.5
+        return kalshi_market_prob if kalshi_market_prob else 0.5
 
     home_off = home_stats.get("off_rating") or 110
     away_off = away_stats.get("off_rating") or 110
@@ -406,6 +440,10 @@ def compute_total_probability(home_stats: Dict, away_stats: Dict, total_line: fl
     sigma_total = 12.0
     z = (pred_total - total_line) / (sigma_total * math.sqrt(2))
     p_over = 0.5 + 0.5 * math.erf(z)
+
+    # Apply Kalshi calibration shrinkage if available
+    if kalshi_market_prob is not None:
+        p_over = 0.8 * p_over + 0.2 * kalshi_market_prob
 
     return max(0.01, min(0.99, p_over))
 
@@ -460,11 +498,11 @@ def build_all_rows(
                 kalshi_prob = kalshi_mid_price(mkt)
 
                 if market_type == "moneyline":
-                    model_prob = compute_win_probability(home_stats, away_stats, **model_weights)
+                    model_prob = compute_win_probability(home_stats, away_stats, kalshi_market_prob=kalshi_prob, **model_weights)
                 elif market_type == "spread":
-                    model_prob = compute_spread_probability(home_stats, away_stats, parsed["line"], **model_weights)
+                    model_prob = compute_spread_probability(home_stats, away_stats, parsed["line"], kalshi_market_prob=kalshi_prob, **model_weights)
                 elif market_type == "total":
-                    model_prob = compute_total_probability(home_stats, away_stats, parsed["line"], **model_weights)
+                    model_prob = compute_total_probability(home_stats, away_stats, parsed["line"], kalshi_market_prob=kalshi_prob, **model_weights)
                 else:
                     model_prob = 0.5
 

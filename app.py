@@ -22,6 +22,10 @@ import re
 import os
 from datetime import datetime, timedelta, timezone, date
 from typing import Optional, Dict, List
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ============================================================================
 # PAGE CONFIG & STYLING

@@ -91,18 +91,16 @@ def main():
 
     # ---------- METRIC WEIGHT SLIDERS ----------
     with st.expander("⚙️ Model Tilts", expanded=True):
-        st.caption("Adjust these to tune how much weight the XGBoost prediction carries vs Kalshi market price")
-        cols = st.columns(len(METRIC_WEIGHTS_CONFIG))
+        st.caption("Tune how much the XGBoost model prediction vs Kalshi market price drives the edge calculation")
         weights = {}
-        for col, (key, cfg) in zip(cols, METRIC_WEIGHTS_CONFIG.items()):
-            with col:
-                weights[key] = st.slider(
-                    cfg["label"],
-                    0.0, 2.0 if key == "w_xgb" else 1.0,
-                    cfg["default"],
-                    0.05 if key == "w_xgb" else 0.1,
-                    help=cfg["description"],
-                )
+        for key, cfg in METRIC_WEIGHTS_CONFIG.items():
+            weights[key] = st.slider(
+                cfg["label"],
+                0.0, 2.0,
+                cfg["default"],
+                0.05,
+                help=cfg["description"],
+            )
 
     st.divider()
 
@@ -178,9 +176,10 @@ def main():
     # ---------- ALL GAMES ----------
     st.subheader("📊 All Games")
 
+    game_status_map = {g["game_id"]: g["status"] for g in games}
     for game_id, gdf in df.groupby("game_id"):
         label = gdf.iloc[0]["game_label"]
-        status_icon = "🔴 LIVE" if games[0]["status"] == "in_progress" else ""
+        status_icon = "🔴 LIVE" if game_status_map.get(game_id) == "in_progress" else ""
         with st.expander(f"{label}  {status_icon}", expanded=False):
             tab_ml, tab_sp, tab_tot = st.tabs(["Moneyline", "Spread", "Total"])
             for tab, mtype in [(tab_ml, "moneyline"), (tab_sp, "spread"), (tab_tot, "total")]:

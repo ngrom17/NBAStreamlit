@@ -254,9 +254,10 @@ def build_all_rows(
                 kalshi_american = int(prob_to_american(kalshi_prob).replace("+", ""))
 
                 if market_type == "moneyline":
-                    # Ticker suffix team = which team this YES contract is for
-                    ticker_team = mkt["ticker"].split("-")[-1][:3]
-                    if ticker_team == home_abbr:
+                    # YES contract is for whichever team is in the ticker suffix
+                    # parsed already has home_abbr; suffix matches home or away
+                    ticker_team = mkt["ticker"].split("-")[-1]
+                    if ticker_team == parsed["home_abbr"]:
                         model_prob = home_prob_xgb
                     else:
                         model_prob = away_prob_xgb

@@ -111,23 +111,9 @@ METRIC_WEIGHTS_CONFIG = {
         "default": 1.0,
         "description": (
             "Weight of the 68.9%-accurate XGBoost ML model prediction. "
-            "At 1.0 the model runs at full strength. Lower this to rely more on Kalshi market prices."
-        ),
-    },
-    "w_form": {
-        "label": "🔥 Recent Form",
-        "default": 0.5,
-        "description": (
-            "Boost or suppress teams on hot/cold streaks (last-10 win%). "
-            "The XGBoost model already includes form signals — this adds an extra tilt."
-        ),
-    },
-    "w_rest": {
-        "label": "😴 Rest Advantage",
-        "default": 0.5,
-        "description": (
-            "Amplify back-to-back fatigue penalty and rest-day bonus. "
-            "The XGBoost model already includes days-rest — this adds extra weight."
+            "At 1.0 the model runs at full strength. "
+            "Lower to rely more on Kalshi market prices (edge → 0). "
+            "Above 1.0 extrapolates beyond the model probability and is clamped to [1%, 99%]."
         ),
     },
 }
